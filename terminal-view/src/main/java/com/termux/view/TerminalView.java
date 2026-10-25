@@ -169,7 +169,7 @@ public final class TerminalView extends View {
             @Override
             public boolean onScroll(MotionEvent e, float distanceX, float distanceY) {
                 if (mEmulator == null) return true;
-                if (mEmulator.isMouseTrackingActive() && e.isFromSource(InputDevice.SOURCE_MOUSE)) {
+                if (mEmulator.isMouseTrackingActive() && e.isFromSource(InputDevice.SOURCE_MOUSE) && !isTouchpadSwipe(e)) {
                     // If moving with mouse pointer while pressing button, report that instead of scroll.
                     // This means that we never report moving with button press-events for touch input,
                     // since we cannot just start sending these events without a starting press event,
@@ -249,6 +249,8 @@ public final class TerminalView extends View {
             @Override
             public void onLongPress(MotionEvent event) {
                 if (mGestureRecognizer.isInProgress()) return;
+                // Two fingers resting on a touchpad before a swipe are not a long press.
+                if (isTouchpadSwipe(event)) return;
                 if (mClient.onLongPress(event)) return;
                 if (!isSelectingText()) {
                     performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
@@ -571,6 +573,16 @@ public final class TerminalView extends View {
         mEmulator.sendMouseEvent(button, x, y, pressed);
     }
 
+    /**
+     * Whether {@code event} is part of a swipe with two fingers on a touchpad. Android 14 and
+     * later report it as a single finger moving from a mouse source, which would otherwise be
+     * taken as a drag with the left button, so it is scrolled as a finger on the screen is.
+     */
+    static boolean isTouchpadSwipe(MotionEvent event) {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            event.getClassification() == MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE;
+    }
+
     /** Perform a scroll, either from dragging the screen or by scrolling a mouse wheel. */
     void doScroll(MotionEvent event, int rowsDown) {
         boolean up = rowsDown < 0;
@@ -612,7 +624,7 @@ public final class TerminalView extends View {
             updateFloatingToolbarVisibility(event);
             mGestureRecognizer.onTouchEvent(event);
             return true;
-        } else if (event.isFromSource(InputDevice.SOURCE_MOUSE)) {
+        } else if (event.isFromSource(InputDevice.SOURCE_MOUSE) && !isTouchpadSwipe(event)) {
             if (event.isButtonPressed(MotionEvent.BUTTON_SECONDARY)) {
                 if (action == MotionEvent.ACTION_DOWN) showContextMenu();
                 return true;
