@@ -585,6 +585,27 @@ public final class TerminalBuffer {
     }
 
 
+    /**
+     * The bitmap of the cell with {@code style}, with {@code srcRect} set to the part of it that
+     * {@code cells} cells from that one rightwards show, or {@code null} if there is none. For
+     * drawing a run of cells of one bitmap at once, without allocating.
+     */
+    public synchronized Bitmap getTerminalBitmapRun(long style, int cells, Rect srcRect) {
+        TerminalBitmap terminalBitmap = getTerminalBitmap(style);
+        if (terminalBitmap == null) {
+            return null;
+        }
+
+        int x = TextStyle.getTerminalBitmapX(style);
+        int y = TextStyle.getTerminalBitmapY(style);
+        srcRect.set(
+            x * terminalBitmap.mCellWidth,
+            y * terminalBitmap.mCellHeight,
+            (x + cells) * terminalBitmap.mCellWidth,
+            (y + 1) * terminalBitmap.mCellHeight);
+        return terminalBitmap.mBitmap;
+    }
+
     public synchronized Rect getSixelRect(long style) {
         TerminalBitmap terminalBitmap = getTerminalBitmap(style);
         if (terminalBitmap == null) {
@@ -707,7 +728,14 @@ public final class TerminalBuffer {
     }
 
 
-    /** Remove bitmaps that are completely scrolled out. */
+    /**
+     * Remove the bitmaps of {@code row}, which is being recycled, that no other row still shows:
+     * a bitmap whose top rows have scrolled out keeps the rows still on screen, as the rows of
+     * text around it do. On the alternate screen, which has no history, the row recycled is the
+     * one that just scrolled out of the top. The rows checked are those on screen and, for a row
+     * leaving the history, the next row of the history; {@link #doTerminalBitmapsGC(int)}
+     * removes any bitmap left behind.
+     */
     public synchronized void removeScrolledOutTerminalBitmaps(int row) {
         Set<Integer> bitmapsToRemove = new HashSet<>();
 
@@ -718,21 +746,22 @@ public final class TerminalBuffer {
                 bitmapsToRemove.add(bitmapNum);
             }
         }
+        if (bitmapsToRemove.isEmpty()) return;
 
-        if (row + 1 < mTotalRows) {
-            TerminalRow nextLine = mLines[row + 1];
-            if (nextLine.mHasTerminalBitmap) {
-                for (int column = 0; column < mColumns; column++) {
-                    long columnStyle = nextLine.getStyle(column);
-                    int bitmapNum = TextStyle.getTerminalBitmapNum(columnStyle);
-                    if (bitmapNum >= TERMINAL_BITMAP__NUM_START) {
-                        bitmapsToRemove.add(bitmapNum);
-                    }
+        int nextRow = (row + 1) % mTotalRows;
+        for (int screenRow = -1; screenRow < mScreenRows && !bitmapsToRemove.isEmpty(); screenRow++) {
+            int internalRow = screenRow < 0 ? nextRow : externalToInternalRow(screenRow);
+            TerminalRow line = mLines[internalRow];
+            if (internalRow == row || line == null || !line.mHasTerminalBitmap) continue;
+            for (int column = 0; column < mColumns; column++) {
+                int bitmapNum = TextStyle.getTerminalBitmapNum(line.getStyle(column));
+                if (bitmapNum >= TERMINAL_BITMAP__NUM_START) {
+                    bitmapsToRemove.remove(bitmapNum);
                 }
             }
         }
 
-        for(Integer bitmapStyle : bitmapsToRemove) {
+        for (Integer bitmapStyle : bitmapsToRemove) {
             mTerminalBitmaps.remove(bitmapStyle);
         }
     }
