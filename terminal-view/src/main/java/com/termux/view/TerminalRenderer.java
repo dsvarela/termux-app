@@ -37,6 +37,10 @@ public final class TerminalRenderer {
 
     private final float[] asciiMeasures = new float[127];
 
+    /** Reused for every run of image cells drawn, so that drawing a frame allocates none. */
+    private final Rect mBitmapSrcRect = new Rect();
+    private final RectF mBitmapDestRect = new RectF();
+
     public TerminalRenderer(int textSize, Typeface typeface) {
         mTextSize = textSize;
         mTypeface = typeface;
@@ -114,16 +118,31 @@ public final class TerminalRenderer {
                             lastRunStartIndex, charsSinceLastRun, measuredWidthForRun,
                             cursorColor, cursorShape, lastRunStyle, reverseVideo || invertCursorTextColor || lastRunInsideSelection);
                     }
-                    Bitmap bitmap = mEmulator.getScreen().getSixelBitmap(style);
+                    // The cells to the right that show the same bitmap's row, part by part, are
+                    // drawn with this one in a single call: a screen of formulas holds hundreds
+                    // of image cells, drawn again on every frame.
+                    final int bitmapNum = TextStyle.getTerminalBitmapNum(style);
+                    final int bitmapX = TextStyle.getTerminalBitmapX(style);
+                    final int bitmapY = TextStyle.getTerminalBitmapY(style);
+                    int run = 1;
+                    while (column + run < columns) {
+                        final long next = lineObject.getStyle(column + run);
+                        if (!TextStyle.isTerminalBitmap(next) || TextStyle.getTerminalBitmapNum(next) != bitmapNum
+                            || TextStyle.getTerminalBitmapY(next) != bitmapY || TextStyle.getTerminalBitmapX(next) != bitmapX + run)
+                            break;
+                        run++;
+                    }
+                    Bitmap bitmap = mEmulator.getScreen().getTerminalBitmapRun(style, run, mBitmapSrcRect);
                     if (bitmap != null) {
                         float left = column * mFontWidth;
                         float top = heightOffset - mFontLineSpacing;
-                        Rect bitmapSrcRect = mEmulator.getScreen().getSixelRect(style);
-                        RectF bitmapDestRect = new RectF(left, top, left + mFontWidth, top + mFontLineSpacing);
-                        canvas.drawBitmap(bitmap, bitmapSrcRect, bitmapDestRect, null);
+                        mBitmapDestRect.set(left, top, left + run * mFontWidth, top + mFontLineSpacing);
+                        canvas.drawBitmap(bitmap, mBitmapSrcRect, mBitmapDestRect, null);
                     }
-                    column += 1;
-                    currentCharIndex += charsForCodePoint;
+                    for (int i = 0; i < run; i++) {
+                        currentCharIndex += Character.isHighSurrogate(line[currentCharIndex]) ? 2 : 1;
+                    }
+                    column += run;
                     measuredWidthForRun = 0.f;
                     lastRunStyle = 0;
                     lastRunInsideCursor = false;
